@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -54,26 +57,53 @@ func RegisterAppInstaller(
 		cfg: cfg,
 	}
 
+	mapper := grafrequest.GetNamespaceMapper(cfg)
+	var store Store
 	var tagHandler func(context.Context, app.CustomRouteResponseWriter, *app.CustomRouteRequest) error
 	var searchHandler func(context.Context, app.CustomRouteResponseWriter, *app.CustomRouteRequest) error
-	if service != nil {
-		mapper := grafrequest.GetNamespaceMapper(cfg)
 
-		// Layer 1→2: Wrap old annotations.Repository with sqlAdapter (implements Store interface)
-		sqlAdapter := NewSQLAdapter(service, cleaner, mapper, cfg)
-
-		// Layer 2→3: Wrap Store interface with K8s REST adapter
-		installer.k8sAdapter = &k8sRESTAdapter{
-			store:  sqlAdapter,
-			mapper: mapper,
+	// Choose storage backend based on configuration
+	switch cfg.KubernetesAnnotationsStoreBackend {
+	case "grpc":
+		var creds credentials.TransportCredentials
+		if cfg.KubernetesAnnotationsGRPCInsecure {
+			creds = insecure.NewCredentials()
+		} else {
+			// TODO: support TLS configuration
+			creds = credentials.NewTLS(nil)
 		}
 
-		// Create the tags handler using the sqlAdapter (which implements TagProvider)
-		tagHandler = newTagsHandler(sqlAdapter)
+		grpcConn, err := grpc.NewClient(
+			cfg.KubernetesAnnotationsGRPCAddress,
+			grpc.WithTransportCredentials(creds),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to annotation gRPC server at %s: %w", cfg.KubernetesAnnotationsGRPCAddress, err)
+		}
 
-		// Create the search handler
-		searchHandler = newSearchHandler(sqlAdapter)
+		store = NewStoreGRPC(grpcConn)
+	case "sql":
+		// sql is the default, but we allow explicitly specifying it for clarity
+		fallthrough
+	default:
+		// Layer 1→2: Wrap old annotations.Repository with sqlAdapter (implements Store interface)
+		store = NewSQLAdapter(service, cleaner, mapper, cfg)
 	}
+
+	// Layer 2→3: Wrap Store interface with K8s REST adapter
+	installer.k8sAdapter = &k8sRESTAdapter{
+		store:  store,
+		mapper: mapper,
+	}
+
+	// Create the tags handler (store must implement TagProvider)
+	// TODO: this feels a bit weird. maybe this is rolled into the store?
+	if tagProvider, ok := store.(TagProvider); ok {
+		tagHandler = newTagsHandler(tagProvider)
+	}
+
+	// Create the search handler
+	searchHandler = newSearchHandler(store)
 
 	provider := simple.NewAppProvider(apis.LocalManifest(), nil, annotationapp.New)
 

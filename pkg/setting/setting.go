@@ -364,6 +364,9 @@ type Cfg struct {
 	DashboardAnnotationCleanupSettings AnnotationCleanupSettings
 	APIAnnotationCleanupSettings       AnnotationCleanupSettings
 	KubernetesAnnotationsAppEnabled    bool
+	KubernetesAnnotationsStoreBackend  string // "sql" (default) or "grpc"
+	KubernetesAnnotationsGRPCAddress   string // gRPC server address (e.g., "localhost:9090")
+	KubernetesAnnotationsGRPCInsecure  bool   // Use insecure gRPC connection (default: false)
 
 	// GrafanaJavascriptAgent config
 	GrafanaJavascriptAgent GrafanaJavascriptAgent
@@ -844,6 +847,9 @@ func (cfg *Cfg) readAnnotationSettings() error {
 	cfg.AnnotationCleanupJobBatchSize = section.Key("cleanupjob_batchsize").MustInt64(100)
 	cfg.AnnotationMaximumTagsLength = section.Key("tags_length").MustInt64(500)
 	cfg.KubernetesAnnotationsAppEnabled = section.Key("kubernetes_annotations_app_enabled").MustBool(false)
+	cfg.KubernetesAnnotationsStoreBackend = section.Key("kubernetes_annotations_store_backend").MustString("sql")
+	cfg.KubernetesAnnotationsGRPCAddress = section.Key("kubernetes_annotations_grpc_address").MustString("localhost:9090")
+	cfg.KubernetesAnnotationsGRPCInsecure = section.Key("kubernetes_annotations_grpc_insecure").MustBool(false)
 
 	switch {
 	case cfg.AnnotationMaximumTagsLength > 4096:
