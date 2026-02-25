@@ -3,6 +3,7 @@ package annotation
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -10,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	annotationV0 "github.com/grafana/grafana/apps/annotation/pkg/apis/annotation/v0alpha1"
-	"github.com/grafana/grafana/pkg/registry/apps/annotation/storepb/v1"
+	storev1 "github.com/grafana/grafana/pkg/registry/apps/annotation/storepb/v1"
 )
 
 // storeGRPC provides a gRPC client implementation of the Store,
@@ -155,11 +156,43 @@ func toProtoListOptions(opts ListOptions) *storev1.ListOptions {
 	}
 }
 
+// fromProtoListOptions converts proto ListOptions to internal ListOptions
+func fromProtoListOptions(opts *storev1.ListOptions) ListOptions {
+	if opts == nil {
+		return ListOptions{}
+	}
+
+	return ListOptions{
+		DashboardUID:   opts.DashboardUid,
+		PanelID:        opts.PanelId,
+		From:           opts.From,
+		To:             opts.To,
+		Limit:          opts.Limit,
+		Continue:       opts.Continue,
+		Tags:           opts.Tags,
+		TagsMatchAny:   opts.TagsMatchAny,
+		Scopes:         opts.Scopes,
+		ScopesMatchAny: opts.ScopesMatchAny,
+	}
+}
+
 // toProtoTagListOptions converts TagListOptions to proto TagListOptions
 func toProtoTagListOptions(opts TagListOptions) *storev1.TagListOptions {
 	return &storev1.TagListOptions{
 		Prefix: opts.Prefix,
 		Limit:  int32(opts.Limit),
+	}
+}
+
+// fromProtoTagListOptions converts proto TagListOptions to internal TagListOptions
+func fromProtoTagListOptions(opts *storev1.TagListOptions) TagListOptions {
+	if opts == nil {
+		return TagListOptions{}
+	}
+
+	return TagListOptions{
+		Prefix: opts.Prefix,
+		Limit:  int(opts.Limit),
 	}
 }
 
@@ -184,6 +217,27 @@ func mapGRPCError(err error) error {
 	default:
 		return fmt.Errorf("grpc error: %s", st.Message())
 	}
+}
+
+// mapToGRPCStatus maps application errors to gRPC status codes
+func mapToGRPCStatus(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	msg := err.Error()
+
+	if strings.Contains(msg, "not found") {
+		return status.Error(codes.NotFound, msg)
+	}
+	if strings.Contains(msg, "already exists") {
+		return status.Error(codes.AlreadyExists, msg)
+	}
+	if strings.Contains(msg, "invalid") {
+		return status.Error(codes.InvalidArgument, msg)
+	}
+
+	return status.Error(codes.Internal, msg)
 }
 
 // toProtoAnnotation converts a v0alpha1.Annotation to proto Annotation
